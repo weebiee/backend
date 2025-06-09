@@ -58,7 +58,6 @@ async def serve_evaluator(args):
     from model import MLEvaluator
 
     evaluator = MLEvaluator(base_model_name='Alibaba-NLP/gte-Qwen2-1.5B-instruct', addition_path='ml/addition.pt')
-    evaluator.model.share_memory()
     servicer = EvaluatorServicerImpl(evaluator)
 
     server = grpc.aio.server()

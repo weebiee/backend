@@ -168,4 +168,5 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
                 scores = res.scores
                 results += scores
 
-        return res
+        return _pb.GetScoresResponse(ok=True, scores=results)
+
