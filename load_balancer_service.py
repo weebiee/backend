@@ -77,7 +77,7 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
             if res.id == self.__id:
                 raise SubnodeUnavailableError(address=node.address, inner='subnode list contains this load balancer')
 
-            if res.tasks <= 3 and node.idle_vram < 0:
+            if res.tasks == 0:
                 node.idle_vram = res.total_vram - res.free_vram
 
         self.__last_refresh = time.time()

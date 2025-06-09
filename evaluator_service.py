@@ -27,7 +27,7 @@ class EvaluatorServicerImpl(EvaluatorServicer):
         if isinstance(self.__evaluator, MLEvaluator) and self.__evaluator.model.device.type == 'cuda':
             device = self.__evaluator.model.device
             total = torch.cuda.get_device_properties(device).total_memory >> 10
-            free = total - torch.cuda.memory_usage(device) >> 10
+            free = total - (torch.cuda.memory_reserved(device) >> 10)
             return total, free
         else:
             import psutil
