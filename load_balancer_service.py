@@ -2,6 +2,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import Iterable
 
 import grpc
 
@@ -41,8 +42,8 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
     def __init__(self, subnodes: list[str], channel_credentials: grpc.ChannelCredentials | None = None):
         self.__subnodes = list(Subnode(address=addr) for addr in subnodes)
         self.__channels = list(
-            grpc.secure_channel(addr, channel_credentials) if channel_credentials else grpc.aio.insecure_channel(addr) for
-            addr in subnodes)
+            grpc.secure_channel(addr, channel_credentials) if channel_credentials else grpc.aio.insecure_channel(addr)
+            for addr in subnodes)
         self.__last_refresh = 0
         self.__id = str(uuid.uuid4().hex)
 
@@ -50,11 +51,14 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
     def id(self) -> str:
         return self.__id
 
-    async def refresh(self) -> list[Subnode]:
+    async def refresh(self, exception_list: Iterable[str] | None = None) -> list[Subnode]:
         if time.time() - self.__last_refresh < 30:
             return self.__subnodes
 
         for (node, channel) in zip(self.__subnodes, self.__channels):
+            if exception_list and node.address in exception_list:
+                continue
+
             stub = _rpc.EvaluatorStub(channel)
             try:
                 res = await stub.Heartbeat(_pb.HeartbeatRequest())
@@ -79,13 +83,14 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
         for chan in self.__channels:
             chan.close()
 
-    def __get_best_node_stub(self, new_tasks_count: int) -> _rpc.EvaluatorStub | None:
+    def __get_best_node_stub(self, new_tasks_count: int,
+                             exception_list: Iterable[str] | None = None) -> _rpc.EvaluatorStub | None:
         from math import inf
         best_chan: grpc.Channel | None = None
         best_prediction = inf
 
         for idx, node in enumerate(self.__subnodes):
-            if node.id is None:
+            if node.id is None or exception_list and node.address in exception_list:
                 continue
 
             mem_per_task = (node.total_vram - node.free_vram + node.memory_offset) / node.tasks
@@ -118,7 +123,15 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
         )
 
     async def GetScores(self, request, context):
-        stub = self.__get_best_node_stub(new_tasks_count=len(request.phrases))
+        exception_set = set()
+        try:
+            await self.refresh(exception_set)
+        except SubnodeUnavailableError as e:
+            exception_set.add(e.address)
+
+        stub = self.__get_best_node_stub(new_tasks_count=len(request.phrases),
+                                         exception_list=exception_set)
+
         if stub:
             return await stub.GetScores(_pb.GetScoresRequest(phrases=request.phrases))
         else:
