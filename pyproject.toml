@@ -10,6 +10,7 @@ dependencies = [
     "grpcio>=1.72.1",
     "grpcio-tools>=1.72.1",
     "pandas>=2.3.0",
+    "psutil>=7.0.0",
     "pyspark-client>=4.0.0",
     "torch>=2.7.1",
     "transformers>=4.52.4",
