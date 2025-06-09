@@ -56,7 +56,7 @@ class EvaluatorServicerImpl(EvaluatorServicer):
                 await asyncio.sleep(0.1)
 
             monitor_task = asyncio.Task(mutate_free_vram())
-            evals = await self.__evaluator.evaluate(request.phrases)
+            evals = await self.__evaluator.evaluate(list(request.phrases))
             monitor_task.cancel()
 
             self.__last_evaluation = _pb.LastExecution(tasks=len(request.phrases), free_vram=vram[1])

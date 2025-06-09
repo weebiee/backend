@@ -1,5 +1,7 @@
+import asyncio
 import time
 import uuid
+from asyncio import TaskGroup
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Iterable
@@ -17,7 +19,8 @@ class Subnode:
     tasks: int = -1
     free_vram: int = -1
     total_vram: int = -1
-    memory_offset: int = 0
+    idle_vram: int = 0
+    last_evaluation: _pb.LastExecution | None = None
     id: str | None = None
 
 
@@ -25,7 +28,7 @@ class Subnode:
 async def load_balancer_servicer(subnodes: list[str], channel_credentials: grpc.ChannelCredentials | None = None):
     impl = LoadBalancerServicerImpl(subnodes, channel_credentials)
     yield impl
-    impl.close()
+    await impl.close()
 
 
 class SubnodeUnavailableError(Exception):
@@ -51,8 +54,8 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
     def id(self) -> str:
         return self.__id
 
-    async def refresh(self, exception_list: Iterable[str] | None = None) -> list[Subnode]:
-        if time.time() - self.__last_refresh < 30:
+    async def refresh(self, exception_list: Iterable[str] | None = None, force: bool = False) -> list[Subnode]:
+        if not force and time.time() - self.__last_refresh < 30:
             return self.__subnodes
 
         for (node, channel) in zip(self.__subnodes, self.__channels):
@@ -69,40 +72,50 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
             node.free_vram = res.free_vram
             node.total_vram = res.total_vram
             node.id = res.id
+            node.last_evaluation = res.last_evaluation
 
             if res.id == self.__id:
                 raise SubnodeUnavailableError(address=node.address, inner='subnode list contains this load balancer')
 
-            if res.tasks <= 3:
-                node.memory_offset = res.free_vram - res.total_vram
+            if res.tasks <= 3 and node.idle_vram < 0:
+                node.idle_vram = res.total_vram - res.free_vram
 
         self.__last_refresh = time.time()
         return self.__subnodes
 
-    def close(self):
+    async def close(self):
         for chan in self.__channels:
-            chan.close()
+            await chan.close()
 
     def __get_best_node_stub(self, new_tasks_count: int,
-                             exception_list: Iterable[str] | None = None) -> _rpc.EvaluatorStub | None:
-        from math import inf
-        best_chan: grpc.Channel | None = None
-        best_prediction = inf
+                             exception_list: Iterable[str] | None = None) \
+            -> list[tuple[_rpc.EvaluatorStub, int]] | None:
+        import heapq
 
+        prediction_list = []
         for idx, node in enumerate(self.__subnodes):
             if node.id is None or exception_list and node.address in exception_list:
                 continue
-
-            mem_per_task = (node.total_vram - node.free_vram + node.memory_offset) / node.tasks
+            mem_per_task = (node.total_vram - node.free_vram - node.idle_vram) / node.tasks if node.tasks > 0 \
+                else (node.total_vram - node.last_evaluation.free_vram - node.idle_vram) / node.last_evaluation.tasks \
+                if node.last_evaluation and node.last_evaluation.tasks > 0 else node.free_vram
             predicted_free_mem = node.free_vram - mem_per_task * new_tasks_count
-            if best_prediction > predicted_free_mem > 0:
-                best_chan = self.__channels[idx]
-                best_prediction = predicted_free_mem
+            heapq.heappush(prediction_list, (predicted_free_mem, mem_per_task, idx))
 
-        if not best_chan:
+        if not prediction_list:
             return None
 
-        return _rpc.EvaluatorStub(best_chan)
+        allocation_list = []
+        allocated_task = 0
+        for (_, mem_per_task, idx) in prediction_list:
+            node = self.__subnodes[idx]
+            due_tasks = int(node.free_vram // mem_per_task)
+            allocated_task += due_tasks
+            allocation_list.append((_rpc.EvaluatorStub(self.__channels[idx]), due_tasks))
+            if allocated_task > new_tasks_count:
+                break
+
+        return allocation_list
 
     async def Heartbeat(self, request, context):
         await self.refresh()
@@ -123,20 +136,36 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
         )
 
     async def GetScores(self, request, context):
-        exception_set = set()
-        try:
-            await self.refresh(exception_set)
-        except SubnodeUnavailableError as e:
-            exception_set.add(e.address)
+        results = []
+        phrases: list[str] = request.phrases
 
-        stub = self.__get_best_node_stub(new_tasks_count=len(request.phrases),
-                                         exception_list=exception_set)
+        while len(results) < len(phrases):
+            exception_set = set()
+            try:
+                await self.refresh(exception_set, force=bool(results))
+            except SubnodeUnavailableError as e:
+                exception_set.add(e.address)
 
-        if stub:
-            return await stub.GetScores(_pb.GetScoresRequest(phrases=request.phrases))
-        else:
-            return _pb.GetScoresResponse(
-                ok=False,
-                err_msg='No available subnode.',
-                scores=list()
-            )
+            allocation = self.__get_best_node_stub(new_tasks_count=len(request.phrases),
+                                                   exception_list=exception_set)
+            tasks: list[asyncio.Task] = []
+            while phrases and allocation:
+                (stub, chunk_size) = allocation.pop()
+                chunk = phrases[:chunk_size]
+                phrases = phrases[chunk_size:]
+
+                async def send_rpc_get_score():
+                    return await stub.GetScores(_pb.GetScoresRequest(phrases=chunk))
+
+                tasks.append(asyncio.Task(send_rpc_get_score()))
+
+            for task in tasks:
+                await task
+                res = task.result()
+                if not res.ok:
+                    return res
+
+                scores = res.scores
+                results += scores
+
+        return res

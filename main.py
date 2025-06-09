@@ -3,6 +3,7 @@ import re
 from argparse import ArgumentParser
 
 import grpc.aio
+
 import Evaluator_pb2_grpc as _rpc
 
 
@@ -10,8 +11,7 @@ def check_token_validity(token: str) -> bool:
     return re.match(r'^[a-zA-Z_]{13,}$', token) is not None
 
 
-def make_server(args) -> grpc.aio.Server:
-    server = grpc.aio.server()
+def make_server(args, server: grpc.aio.Server):
     if args.private_key and args.certificate_chain:
         server.add_secure_port(
             address=args.address,
@@ -19,7 +19,14 @@ def make_server(args) -> grpc.aio.Server:
         )
     else:
         server.add_insecure_port(address=args.address)
-    return server
+
+
+async def _await_cancellation():
+    try:
+        while True:
+            await asyncio.sleep(100)
+    except asyncio.CancelledError:
+        return
 
 
 async def serve_load_balancer(args):
@@ -38,10 +45,12 @@ async def serve_load_balancer(args):
             from sys import stderr
             print(f'Warning: subnode {e.address} is unavailable: {e.inner}', file=stderr)
 
-        server = make_server(args)
+        server = grpc.aio.server()
+        make_server(args, server)
         _rpc.add_EvaluatorServicer_to_server(servicer, server)
         await server.start()
-        await server.wait_for_termination()
+        await _await_cancellation()
+        await server.stop(grace=10)
 
 
 async def serve_evaluator(args):
@@ -49,12 +58,17 @@ async def serve_evaluator(args):
     from model import MLEvaluator
 
     evaluator = MLEvaluator(base_model_name='Alibaba-NLP/gte-Qwen2-1.5B-instruct', addition_path='ml/addition.pt')
+    evaluator.model.share_memory()
     servicer = EvaluatorServicerImpl(evaluator)
 
-    server = make_server(args)
+    server = grpc.aio.server()
+    make_server(args, server)
+
     _rpc.add_EvaluatorServicer_to_server(servicer, server)
     await server.start()
-    await server.wait_for_termination()
+
+    await _await_cancellation()
+    await server.stop(grace=10)
 
 
 async def main():

@@ -1,5 +1,3 @@
-import asyncio
-from concurrent.futures.process import ProcessPoolExecutor
 from enum import Enum
 from os import PathLike
 
@@ -13,12 +11,9 @@ class Sentiment(Enum):
 
 class Evaluation:
     def __init__(self, source: dict[Sentiment | int | str, float]):
-        if any(not isinstance(value, float) and not isinstance(value, int) for (_, value) in source):
-            raise ValueError('source')
-
         self.__confidences = dict(
-            (Sentiment(key) if isinstance(key, int) else Sentiment[key] if isinstance(key, str) else key, value) for
-            (key, value) in source)
+            (Sentiment(key) if isinstance(key, int) else Sentiment[key] if isinstance(key, str) else key, float(value))
+            for (key, value) in source.items())
 
     def __getitem__(self, item: Sentiment):
         return self.__confidences[item]
@@ -47,11 +42,7 @@ class MLEvaluator(Evaluator):
         from transformers import AutoTokenizer
 
         self.tokenizer = AutoTokenizer.from_pretrained(self.base_model_name, trust_remote_code=True)
-        self.model = EmbeddingModel(self.base_model_name, 3, addition_path=self.addition_path)
-
-    def __get_scores(self, phrases: list[str]) -> list[list[float]]:
-        tokens = self.tokenizer(phrases, padding=True, truncation=True, return_tensors='pt')
-        return self.model(**tokens).cpu().detech().numpy()
+        self.model = EmbeddingModel(self.base_model_name, 3, addition_path=self.addition_path).eval()
 
     async def evaluate(self, phrases: list[Phrase | str]) -> list[Evaluation]:
         if len(phrases) <= 0:
@@ -61,9 +52,9 @@ class MLEvaluator(Evaluator):
         else:
             phrase_tokenizing = phrases
 
-        loop = asyncio.get_event_loop()
-        with ProcessPoolExecutor() as executor:
-            scores = await loop.run_in_executor(executor, self.__get_scores, phrase_tokenizing)
+        tokens = self.tokenizer(phrase_tokenizing, padding=True, truncation=True, return_tensors='pt').to(
+            self.model.device)
+        scores = self.model(**tokens).cpu().detach().numpy()
 
         evals = list(Evaluation(dict((Sentiment(idx), s) for (idx, s) in enumerate(score))) for score in scores)
         if type(phrases[0]) is Phrase:
