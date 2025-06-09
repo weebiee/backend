@@ -1,3 +1,5 @@
+import asyncio
+from concurrent.futures.process import ProcessPoolExecutor
 from enum import Enum
 from os import PathLike
 
@@ -37,15 +39,35 @@ class Evaluator:
 
 
 class MLEvaluator(Evaluator):
-    def __init__(self, base_model_name: str, addition_file_path: str | PathLike[str]):
+    def __init__(self, base_model_name: str, addition_path: str | PathLike[str]):
         self.base_model_name = base_model_name
-        self.addition_file_path = addition_file_path
+        self.addition_path = addition_path
 
-    async def evaluate(self, phrases: list[Phrase]) -> list[Evaluation]:
         from ml.model import EmbeddingModel
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained(self.base_model_name, trust_remote_code=True)
-        model = EmbeddingModel(self.base_model_name, 3, addition_path=self.addition_file_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(self.base_model_name, trust_remote_code=True)
+        self.model = EmbeddingModel(self.base_model_name, 3, addition_path=self.addition_path)
 
+    def __get_scores(self, phrases: list[str]) -> list[list[float]]:
+        tokens = self.tokenizer(phrases, padding=True, truncation=True, return_tensors='pt')
+        return self.model(**tokens).cpu().detech().numpy()
 
+    async def evaluate(self, phrases: list[Phrase | str]) -> list[Evaluation]:
+        if len(phrases) <= 0:
+            return []
+        if type(phrases[0]) is Phrase:
+            phrase_tokenizing = list(v.content for v in phrases)
+        else:
+            phrase_tokenizing = phrases
+
+        loop = asyncio.get_event_loop()
+        with ProcessPoolExecutor() as executor:
+            scores = await loop.run_in_executor(executor, self.__get_scores, phrase_tokenizing)
+
+        evals = list(Evaluation(dict((Sentiment(idx), s) for (idx, s) in enumerate(score))) for score in scores)
+        if type(phrases[0]) is Phrase:
+            for idx, e in enumerate(evals):
+                phrases[idx].evaluation = e
+
+        return evals

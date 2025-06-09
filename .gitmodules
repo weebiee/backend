@@ -1,0 +1,6 @@
+[submodule "ml"]
+	path = ml
+	url = git@github.com:weebiee/model.git
+[submodule "protos"]
+	path = protos
+	url = git@github.com:weebiee/protos.git
