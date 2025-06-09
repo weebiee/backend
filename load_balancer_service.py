@@ -98,7 +98,7 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
                 continue
             mem_per_task = (node.total_vram - node.free_vram - node.idle_vram) / node.tasks if node.tasks > 0 \
                 else (node.total_vram - node.last_evaluation.free_vram - node.idle_vram) / node.last_evaluation.tasks \
-                if node.last_evaluation and node.last_evaluation.tasks > 0 else node.free_vram
+                if node.last_evaluation and node.last_evaluation.tasks > 0 else max(node.free_vram, 1)
             predicted_free_mem = node.free_vram - mem_per_task * new_tasks_count
             heapq.heappush(prediction_list, (predicted_free_mem, mem_per_task, idx))
 
@@ -109,7 +109,7 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
         allocated_task = 0
         for (_, mem_per_task, idx) in prediction_list:
             node = self.__subnodes[idx]
-            due_tasks = int(node.free_vram // mem_per_task)
+            due_tasks = int(node.free_vram // mem_per_task) if mem_per_task > 0 else new_tasks_count - allocated_task
             allocated_task += due_tasks
             allocation_list.append((_rpc.EvaluatorStub(self.__channels[idx]), due_tasks))
             if allocated_task > new_tasks_count:
