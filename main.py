@@ -39,7 +39,7 @@ async def main():
     parser = ArgumentParser()
     parser.add_argument('--load-balancer', '-L', nargs='?', default=False, help='Work as a load balancer, '
                                                                                 'instead of evaluator.')
-    parser.add_argument('--address', '-A', nargs='?', type=str, default='[::]:69283')
+    parser.add_argument('--address', '-A', nargs='?', type=str, default='[::]:63398')
     parser.add_argument('--token', type=str, required=True)
     parser.add_argument('--private-key', '--pk', type=str)
     parser.add_argument('--certificate-chain', '--ch', type=str)
