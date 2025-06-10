@@ -56,8 +56,9 @@ async def serve_load_balancer(args):
 async def serve_evaluator(args):
     from evaluator_service import EvaluatorServicerImpl
     from model import MLEvaluator
+    from ml.model import BEST_PROMPT
 
-    evaluator = MLEvaluator(base_model_name='Alibaba-NLP/gte-Qwen2-1.5B-instruct', addition_path='ml/addition.pt')
+    evaluator = MLEvaluator(base_model_name='Alibaba-NLP/gte-Qwen2-1.5B-instruct', addition_path='ml/addition.pt', prompt=BEST_PROMPT)
     servicer = EvaluatorServicerImpl(evaluator)
 
     server = grpc.aio.server()

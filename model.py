@@ -34,9 +34,10 @@ class Evaluator:
 
 
 class MLEvaluator(Evaluator):
-    def __init__(self, base_model_name: str, addition_path: str | PathLike[str]):
+    def __init__(self, base_model_name: str, addition_path: str | PathLike[str], prompt: str | None = None):
         self.base_model_name = base_model_name
         self.addition_path = addition_path
+        self.prompt = prompt
 
         from ml.model import EmbeddingModel
         from transformers import AutoTokenizer
@@ -51,6 +52,9 @@ class MLEvaluator(Evaluator):
             phrase_tokenizing = list(v.content for v in phrases)
         else:
             phrase_tokenizing = phrases
+
+        if self.prompt:
+            phrase_tokenizing = list(self.prompt + v for v in phrase_tokenizing)
 
         tokens = self.tokenizer(phrase_tokenizing, padding=True, truncation=True, return_tensors='pt').to(
             self.model.device)
