@@ -1,7 +1,6 @@
 import asyncio
 import time
 import uuid
-from asyncio import TaskGroup
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Iterable
@@ -77,7 +76,7 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
             if res.id == self.__id:
                 raise SubnodeUnavailableError(address=node.address, inner='subnode list contains this load balancer')
 
-            if res.tasks == 0:
+            if res.tasks == 0 and (node.idle_vram < 0 or node.idle_vram > res.total_vram - res.free_vram):
                 node.idle_vram = res.total_vram - res.free_vram
 
         self.__last_refresh = time.time()
@@ -139,14 +138,14 @@ class LoadBalancerServicerImpl(EvaluatorServicer):
         results = []
         phrases: list[str] = request.phrases
 
-        while len(results) < len(phrases):
+        while len(results) < len(request.phrases):
             exception_set = set()
             try:
-                await self.refresh(exception_set, force=bool(results))
+                await self.refresh(exception_set, force=not results)
             except SubnodeUnavailableError as e:
                 exception_set.add(e.address)
 
-            allocation = self.__get_best_node_stub(new_tasks_count=len(request.phrases),
+            allocation = self.__get_best_node_stub(new_tasks_count=len(phrases),
                                                    exception_list=exception_set)
             tasks: list[asyncio.Task] = []
             while phrases and allocation:

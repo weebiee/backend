@@ -47,19 +47,22 @@ class EvaluatorServicerImpl(EvaluatorServicer):
     async def GetScores(self, request, context):
         self.__tasks_count += len(request.phrases)
         try:
-            vram = list(self.__vram_mb())
+            from math import inf
+            vram = [inf]
+            (_, initial_free_vram) = self.__vram_mb()
 
             async def mutate_free_vram():
                 _, f = self.__vram_mb()
-                if f < vram[1]:
-                    vram[1] = f
+                if f < vram[0]:
+                    vram[0] = f
+                    print(f'runtime free vram:', f)
                 await asyncio.sleep(0.1)
 
             monitor_task = asyncio.Task(mutate_free_vram())
             evals = await self.__evaluator.evaluate(list(request.phrases))
             monitor_task.cancel()
 
-            self.__last_evaluation = _pb.LastExecution(tasks=len(request.phrases), free_vram=vram[1])
+            self.__last_evaluation = _pb.LastExecution(tasks=len(request.phrases), free_vram=min(initial_free_vram, vram[0]))
 
             return _pb.GetScoresResponse(
                 ok=True,

@@ -19,7 +19,7 @@ class Evaluation:
         return self.__confidences[item]
 
     def __setitem__(self, key: Sentiment, value: float):
-        return self.__confidences
+        self.__confidences[key] = value
 
 
 class Phrase:
@@ -56,9 +56,13 @@ class MLEvaluator(Evaluator):
         if self.prompt:
             phrase_tokenizing = list(self.prompt + v for v in phrase_tokenizing)
 
-        tokens = self.tokenizer(phrase_tokenizing, padding=True, truncation=True, return_tensors='pt').to(
-            self.model.device)
-        scores = self.model(**tokens).cpu().detach().numpy()
+
+        import torch
+        with torch.no_grad():
+            tokens = self.tokenizer(phrase_tokenizing, padding=True, truncation=True, return_tensors='pt').to(
+                self.model.device)
+            scores = self.model(**tokens)
+            scores = scores.cpu().detach().numpy()
 
         evals = list(Evaluation(dict((Sentiment(idx), s) for (idx, s) in enumerate(score))) for score in scores)
         if type(phrases[0]) is Phrase:
